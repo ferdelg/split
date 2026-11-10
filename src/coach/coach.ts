@@ -7,8 +7,9 @@ import { buildSystemPrompt } from "./prompt";
 import { PROPOSE_WORKOUT_TOOL, describeProposal, parseProposeWorkout } from "./tools";
 
 export const HISTORY_IN_REQUEST = 12;
-export const CHAT_MAX_MESSAGES = 40;
-export const CHAT_MAX_BYTES = 24 * 1024;
+/** Per-day chat cap: 30 days × 8 KB ≤ 240 KB of the 2 MB quota (docs/PLAN.md). */
+export const CHAT_MAX_MESSAGES = 30;
+export const CHAT_MAX_BYTES = 8 * 1024;
 export const MAX_CALLS = 3;
 export const MAX_TOKENS = 700;
 

@@ -4,6 +4,7 @@
  * per PLAN "Boot". Only actions.ts writes app data to the store; this module
  * writes only housekeeping (chat pruning, bests rebuild, thumb compaction).
  */
+import { packMonthLog } from "./logCodec";
 import { useLayoutEffect, useReducer, useRef } from "preact/hooks";
 import type {
   AIAdapter, AppState, BestsDoc, Capabilities, ChatMessage, FlinshBridge, MediaAdapter, MonthKey, MonthLog, NotificationsAdapter,
@@ -285,8 +286,12 @@ function scheduleMidnight(): void {
 
 // ── housekeeping (after first paint) ───────────────────────────────────────
 
-/** Rough store budget before thumbs of months older than a year are dropped. */
-const COMPACT_ABOVE_BYTES = 1_500_000;
+/**
+ * Packed log bytes above which thumbs of months older than a year are dropped.
+ * Photos (≤ ~800 KB) and chat (≤ ~240 KB) have their own caps, so logs get the
+ * rest of the 2 MB; tests/storeSize.test.ts shows three years fit either way.
+ */
+const COMPACT_LOGS_ABOVE_BYTES = 650_000;
 
 export async function housekeeping(): Promise<void> {
   const { store } = services();
@@ -319,9 +324,11 @@ export async function housekeeping(): Promise<void> {
   } catch (e) {
     console.warn("[split] bests rebuild failed", e);
   }
-  // 4. Space: drop thumbs from months older than a year if the cache is getting big.
+  // 4. Space: drop thumbs from months older than a year once the logs get big.
   try {
-    if (store.cachedBytes() > COMPACT_ABOVE_BYTES) {
+    let logBytes = 0;
+    for (const log of Object.values(state.logs)) logBytes += JSON.stringify(packMonthLog(log)).length;
+    if (logBytes > COMPACT_LOGS_ABOVE_BYTES) {
       const yearAgo = addMonths(monthOf(today), -12);
       const logs = { ...state.logs };
       for (const [m, log] of Object.entries(logs)) {
@@ -329,7 +336,7 @@ export async function housekeeping(): Promise<void> {
         const c = compactOldThumbs(log);
         if (c !== log) {
           logs[m] = c;
-          store.set(logKey(m), c);
+          store.set(logKey(m), packMonthLog(c));
         }
       }
       setState({ logs });

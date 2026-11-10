@@ -17,7 +17,11 @@ import { photoKey } from "../data/keys";
 import { uid } from "../lib/ids";
 
 export const PHOTO_MAX_EDGE = 640;
-export const PHOTO_MAX_BYTES = 40_000;
+/**
+ * Decoded JPEG bytes per photo. The store keeps it as a base64 data URL
+ * (×4/3), so 30 KB → ~40 KB stored, and 20 photos ≈ 800 KB of the 2 MB quota.
+ */
+export const PHOTO_MAX_BYTES = 30_000;
 export const PHOTO_KEEP = 20;
 export const THUMB_EDGE = 48;
 export const FILES_MAX_EDGE = 1600;

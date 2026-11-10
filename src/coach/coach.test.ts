@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AIAdapter, AIRequest, AIResponse, ChatMessage, CoachContext, DayPlan, Session, Split } from "../types";
 import { PROPOSE_WORKOUT_TOOL, describeProposal, parseProposeWorkout, parseRepsLoose } from "./tools";
-import { historyToMessages, runCoachTurn, trimChat, DEFAULT_PROPOSAL_TEXT, MAX_CALLS } from "./coach";
+import { historyToMessages, runCoachTurn, trimChat, DEFAULT_PROPOSAL_TEXT, MAX_CALLS, CHAT_MAX_BYTES, CHAT_MAX_MESSAGES } from "./coach";
 import { buildSystemPrompt, QUICK_PROMPTS } from "./prompt";
 import { KG_PER_LB } from "../lib/units";
 
@@ -192,14 +192,14 @@ describe("historyToMessages", () => {
 });
 
 describe("trimChat", () => {
-  it("keeps the last 40 and under 24 KB", () => {
+  it("keeps the last CHAT_MAX_MESSAGES and under CHAT_MAX_BYTES", () => {
     const h = Array.from({ length: 60 }, (_, i) => msg(String(i), "user", `m${i}`));
     const t = trimChat(h);
-    expect(t).toHaveLength(40);
-    expect(t[39].id).toBe("59");
+    expect(t).toHaveLength(CHAT_MAX_MESSAGES);
+    expect(t[t.length - 1].id).toBe("59");
     const big = Array.from({ length: 30 }, (_, i) => msg(String(i), "assistant", "x".repeat(2000)));
     const tb = trimChat(big);
-    expect(new TextEncoder().encode(JSON.stringify(tb)).length).toBeLessThanOrEqual(24 * 1024);
+    expect(new TextEncoder().encode(JSON.stringify(tb)).length).toBeLessThanOrEqual(CHAT_MAX_BYTES);
     expect(tb[tb.length - 1].id).toBe("29");
     expect(trimChat([msg("1", "user", "x".repeat(30000))])).toHaveLength(1);
   });

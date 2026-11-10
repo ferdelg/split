@@ -8,6 +8,7 @@ import { buildSchedule, dueBanners, defaultReminders } from "../lib/reminders";
 import { detectBests, foldSession, rebuildBests, streak, dayStatus, emptyBests } from "./history";
 import { applyProposalToSession, completeSet, finalizeSession, sessionFromPlan } from "./session";
 import { buildTemplate } from "./templates";
+import { normalizeMonthLog } from "./defaults";
 import { actions } from "./actions";
 import { getState, initApp, resetForTests, services, setClock } from "./state";
 
@@ -203,7 +204,7 @@ describe("actions flow", () => {
     expect(formatWeight(getState().splits!.splits[0].days[1].exercises[0].weightKg, "lb")).toBe("100 lb");
     await services().store.flush();
     expect(bridge.data.has("active")).toBe(false);
-    expect((bridge.data.get("logs/2026-11") as MonthLog).days["2026-11-09"].exercises[0].sets.every((s) => s.done)).toBe(true);
+    expect(normalizeMonthLog(bridge.data.get("logs/2026-11"), "2026-11").days["2026-11-09"].exercises[0].sets.every((s) => s.done)).toBe(true);
     expect([...bridge.data.keys()].some((k) => k.includes(":"))).toBe(false);
 
     resetForTests();

@@ -278,12 +278,16 @@ export function createStoreAdapter(raw: RawStore, backend: StoreBackend, opts: S
     }
   }
 
-  /** Quota recovery: delete the oldest chat key that isn't today's. */
+  /**
+   * Quota recovery, cheapest data first: the oldest chat day that isn't
+   * today's, then the oldest full photo (its log keeps the 48 px thumb).
+   * Logs, the split and settings are never touched.
+   */
   async function freeSpace(writingKey: string): Promise<boolean> {
     try {
       const keep = `chat/${today()}`;
-      const chats = (await raw.list("chat/")).filter((k) => !CHUNK_RE.test(k) && k !== keep && k !== writingKey).sort();
-      const victim = chats[0];
+      const old = (prefix: string) => raw.list(prefix).then((ks) => ks.filter((k) => !CHUNK_RE.test(k) && k !== keep && k !== writingKey).sort());
+      const victim = (await old("chat/"))[0] ?? (writingKey.startsWith("photo/") ? undefined : (await old("photo/"))[0]);
       if (!victim) return false;
       const n = await knownChunks(victim);
       await raw.delete(victim);

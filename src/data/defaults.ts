@@ -2,6 +2,7 @@
  * Defaults, and normalizers that make stored values safe to use (older
  * shapes, partial writes, junk). Pure.
  */
+import { unpackMonthLog } from "./logCodec";
 import type {
   BestsDoc, ChatMessage, DayPlan, ExerciseLog, ISODate, MonthKey, MonthLog, PlannedExercise, Profile, ReminderSettings,
   Session, Settings, Split, SplitsDoc, Timestamp, WeightUnit,
@@ -174,8 +175,9 @@ export function normalizeSession(raw: unknown): Session | null {
   };
 }
 
-export function normalizeMonthLog(raw: unknown, month: MonthKey): MonthLog {
+export function normalizeMonthLog(stored: unknown, month: MonthKey): MonthLog {
   const out: MonthLog = { month, days: {} };
+  const raw = unpackMonthLog(stored);
   if (!isObj(raw) || !isObj(raw.days)) return out;
   for (const [date, v] of Object.entries(raw.days)) {
     const s = normalizeSession(v);

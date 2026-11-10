@@ -3,6 +3,7 @@
  * the store write is coalesced (store.ts). This is the only module that
  * writes app data to the store. The API key is never written here.
  */
+import { packMonthLog } from "./logCodec";
 import type {
   AppActions, ChatMessage, CoachMode, ExerciseLog, MonthLog, PlannedExercise, ProposedWorkout, Session, Settings, Split, SplitsDoc,
   Timestamp, Toast,
@@ -72,7 +73,7 @@ function updateLog(month: string, fn: (log: MonthLog) => MonthLog): void {
   const apply = (base: MonthLog) => {
     const next = fn(base);
     setState((s) => ({ logs: { ...s.logs, [month]: next } }));
-    store().set(logKey(month), next);
+    store().set(logKey(month), packMonthLog(next));
   };
   const inMem = getState().logs[month];
   if (inMem) return apply(inMem);
@@ -500,6 +501,11 @@ export const actions: AppActions = {
     if (!msg?.proposal) return;
     if (st.active && st.active.date !== st.today) {
       pushToast({ text: `Finish or discard ${WEEKDAY_NAMES[weekdayOf(st.active.date)]}'s workout first.`, kind: "info" });
+      return;
+    }
+    if (!st.active && sessionOn(st.today, st.logs)?.finishedAt) {
+      // Today is already logged; a second session would merge into it.
+      pushToast({ text: "Today's workout is already logged. You can save this to your split instead.", kind: "info" });
       return;
     }
     const { status: _s, ...p } = msg.proposal;

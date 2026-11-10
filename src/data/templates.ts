@@ -4,7 +4,7 @@
  */
 import type { DayPlan, PlannedExercise, Split, TemplateId, Timestamp, WeightUnit } from "../types";
 import { uid } from "../lib/ids";
-import { fromDisplay, toDisplay } from "../lib/units";
+import { fromDisplay } from "../lib/units";
 
 export const TEMPLATES: { id: TemplateId; name: string; blurb: string }[] = [
   { id: "full-body-3", name: "3-day full body", blurb: "Mon, Wed, Fri. The whole body each time; great to start." },
@@ -121,23 +121,6 @@ function rest(): DayPlan {
   return { kind: "rest", name: "Rest", exercises: [] };
 }
 
-/**
- * kg for a round display number, nudged up by a few ulps if needed so that
- * converting back never lands a hair BELOW the round number (75 lb → 74.999…
- * would read as off-grid to strict checks). The error is < 1e-13 kg.
- */
-function roundKg(display: number, units: WeightUnit): number {
-  let kg = fromDisplay(display, units);
-  const buf = new Float64Array(1);
-  const bits = new BigInt64Array(buf.buffer);
-  for (let i = 0; i < 8 && toDisplay(kg, units) < display; i++) {
-    buf[0] = kg;
-    bits[0] += 1n;
-    kg = buf[0];
-  }
-  return kg;
-}
-
 function planned(row: Row, units: WeightUnit): PlannedExercise {
   const [name, sets, min, max, lb, kg, note] = row;
   const display = units === "lb" ? lb : kg;
@@ -146,7 +129,7 @@ function planned(row: Row, units: WeightUnit): PlannedExercise {
     name,
     sets,
     reps: max > min ? { min, max } : { min },
-    weightKg: display == null ? null : roundKg(display, units),
+    weightKg: display == null ? null : fromDisplay(display, units),
   };
   if (note) ex.note = note;
   return ex;
