@@ -282,7 +282,8 @@ export interface Capabilities {
   ai: AIMode;
   notifications: NotificationsMode;
   photos: MediaMode;
-  wakeLock: boolean;
+  /** What the last request did: unsupported (no API), untested (no workout yet), on, blocked (refused, e.g. by the frame). */
+  wakeLock: "unsupported" | "untested" | "on" | "blocked";
 }
 
 // ── Store adapter (same contract as lose-it) ───────────────────────────────
@@ -309,6 +310,8 @@ export interface StoreAdapter {
   delete(key: string): Promise<void>;
   list(prefix: string): Promise<string[]>;
   flush(): Promise<void>;
+  /** True if the key's last load FAILED (network, timeout), as opposed to the key being absent. */
+  didFail(key: string): boolean;
   onStatus(cb: (s: StoreStatus) => void): () => void;
   cachedBytes(): number;
 }
@@ -409,7 +412,7 @@ export interface MediaAdapter {
   deletePhoto(photoId: string): Promise<void>;
 }
 
-// ── window.flinsh (exists: store, ready, ai; proposed: notifications, files) ─
+// ── window.flinsh (exists: store, ready, ai, files; proposed: notifications) ─
 
 export interface FlinshStoreApi {
   get(key: string): Promise<unknown>;
@@ -418,12 +421,14 @@ export interface FlinshStoreApi {
   list(prefix?: string): Promise<unknown>;
 }
 
+/** flinsh.files (exists with "files:user"; see ../Flinch/docs/flinsh-tool-skill.md §10). */
 export interface FlinshFilesApi {
-  /** Proposed: store a file in the user's scope; resolves with its id. */
-  put(name: string, data: Blob | string, opts?: { contentType?: string }): Promise<{ id: string } | string>;
-  /** Proposed: a displayable URL (blob: or data:) for the id, or null. */
-  get(id: string): Promise<string | null>;
-  delete(id: string): Promise<unknown>;
+  /** Upload to private storage. Accepted: image/jpeg, png, webp, heic (≤ 25 MB). */
+  put(blob: Blob, opts: { name: string; mime: string }): Promise<{ id: string; size: number; name: string; mime: string }>;
+  /** A short-lived (~10 min) signed URL for <img>; never store it. */
+  get(id: string): Promise<string>;
+  list?(prefix?: string): Promise<{ id: string; name: string; mime: string; size: number; created_at: string }[]>;
+  delete(id: string): Promise<boolean>;
 }
 
 export interface FlinshBridge {

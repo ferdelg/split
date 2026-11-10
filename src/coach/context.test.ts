@@ -46,7 +46,7 @@ function state(over: Partial<AppState> = {}): AppState {
   return {
     ready: true,
     today: "2026-11-10", // Tuesday
-    caps: { inFlinsh: true, store: "flinsh", ai: "flinsh", notifications: "live", photos: "inline", wakeLock: false },
+    caps: { inFlinsh: true, store: "flinsh", ai: "flinsh", notifications: "live", photos: "inline", wakeLock: "unsupported" },
     profile: { name: "Magdalena", units: "lb", bodyWeightKg: 63, goal: "muscle", startedOn: "2026-10-01", createdAt: 1, updatedAt: 1 },
     settings: { theme: "dark", reduceMotion: "system", textScale: 1, weightStep: 5, model: "m", reminders: { enabled: true, byWeekday: [] }, dismissedBanners: [] },
     splits: splitsDoc(),

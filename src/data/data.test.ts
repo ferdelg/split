@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FlinshBridge, MonthLog, Session, SplitsDoc } from "../types";
 import { dataUrlBytes, fitJpeg, planEviction } from "../adapters/media";
 import { coachErrorMessage } from "../adapters/ai";
@@ -203,7 +203,8 @@ describe("actions flow", () => {
     actions.saveWeightsToSplit();
     expect(formatWeight(getState().splits!.splits[0].days[1].exercises[0].weightKg, "lb")).toBe("100 lb");
     await services().store.flush();
-    expect(bridge.data.has("active")).toBe(false);
+    // `active` is deleted only after the log write is acknowledged (actions.retireActive).
+    await vi.waitFor(() => expect(bridge.data.has("active")).toBe(false));
     expect(normalizeMonthLog(bridge.data.get("logs/2026-11"), "2026-11").days["2026-11-09"].exercises[0].sets.every((s) => s.done)).toBe(true);
     expect([...bridge.data.keys()].some((k) => k.includes(":"))).toBe(false);
 

@@ -7,7 +7,9 @@ import {
   editSet,
   extraSession,
   finalizeSession,
+  isCurrentSession,
   isExerciseComplete,
+  MIDNIGHT_GRACE_MS,
   markAll,
   removeSet,
   resolveToday,
@@ -176,5 +178,38 @@ describe("session state machine", () => {
     s = editSet(s, id, 1, { weightKg: (ex0(s).sets[1].weightKg ?? 0) + 2.26796185 }, NOW);
     expect(weightsChanged(s, split)).toBe(true);
     expect(weightsChanged(s, null)).toBe(false);
+  });
+});
+
+describe("review fixes", () => {
+  it("swap keeps done sets under the original exercise and moves the rest", () => {
+    let s = fresh();
+    const id = ex0(s).id;
+    const total = ex0(s).sets.length;
+    const oldName = ex0(s).name;
+    s = completeSet(s, id, 0, NOW);
+    s = swapExercise(s, id, "Leg press", 100);
+    const orig = s.exercises.find((e) => e.id === id)!;
+    expect(orig.name).toBe(oldName);
+    expect(orig.sets).toHaveLength(1);
+    expect(orig.sets[0].done).toBe(true);
+    const swapped = s.exercises.find((e) => e.name === "Leg press")!;
+    expect(swapped).toMatchObject({ source: "swapped", swappedFrom: oldName });
+    expect(swapped.sets).toHaveLength(total - 1);
+    expect(swapped.sets.every((x) => !x.done && x.weightKg === 100)).toBe(true);
+    expect(s.exercises.indexOf(swapped)).toBe(s.exercises.indexOf(orig) + 1);
+  });
+
+  it("isCurrentSession: today, or yesterday within the midnight grace", () => {
+    const s = { ...fresh(), date: "2026-11-10", startedAt: Date.UTC(2026, 10, 10, 22) };
+    expect(isCurrentSession(null, "2026-11-10", NOW)).toBe(false);
+    expect(isCurrentSession(s, "2026-11-10", NOW)).toBe(true);
+    const later = s.startedAt + MIDNIGHT_GRACE_MS - 1;
+    expect(isCurrentSession(s, "2026-11-11", later)).toBe(true);
+    expect(isCurrentSession(s, "2026-11-11", s.startedAt + MIDNIGHT_GRACE_MS + 1)).toBe(false);
+    // a set done late extends the window
+    const done = completeSet(s, s.exercises[0].id, 0, s.startedAt + 3_600_000);
+    expect(isCurrentSession(done, "2026-11-11", s.startedAt + MIDNIGHT_GRACE_MS + 1)).toBe(true);
+    expect(isCurrentSession(s, "2026-11-12", later)).toBe(false);
   });
 });

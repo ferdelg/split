@@ -9,7 +9,8 @@
  * - weights are kept to 0.0001 kg (0.0002 lb), far below display precision;
  * - per-set doneAt is dropped (nothing reads it after a session is finished);
  * - consecutive identical sets are run-length encoded: [reps, kg, count];
- * - an exercise's planExerciseId is omitted when it equals its id.
+ * - an exercise's planExerciseId is omitted when it equals its id, and
+ *   packed as "" when the exercise has none (added or coach exercises).
  *
  * Only logs use it. `active` (the in-progress session) stays plain JSON, and
  * in memory everything is a normal Session. Old, unpacked months still load:
@@ -37,7 +38,7 @@ interface PackedExercise {
   w?: string; // swappedFrom
   k?: 1; // skipped
   t?: string; // note
-  p?: string; // planExerciseId when ≠ id
+  p?: string; // planExerciseId when ≠ id; "" = none
 }
 
 interface PackedSession {
@@ -105,7 +106,8 @@ export function packSession(s: Session): PackedSession {
       if (ex.swappedFrom) pe.w = ex.swappedFrom;
       if (ex.skipped) pe.k = 1;
       if (ex.note) pe.t = ex.note;
-      if (ex.planExerciseId && ex.planExerciseId !== ex.id) pe.p = ex.planExerciseId;
+      if (!ex.planExerciseId) pe.p = "";
+      else if (ex.planExerciseId !== ex.id) pe.p = ex.planExerciseId;
       return pe;
     }),
     a: s.startedAt,
@@ -141,8 +143,8 @@ export function unpackSession(p: unknown, date: string): Record<string, unknown>
       reps: typeof r[1] === "number" ? { min: r[0], max: r[1] } : { min: typeof r[0] === "number" ? r[0] : 8 },
       sets: unpackSets(e.s),
       source: SRC_BACK[str(e.o) ?? ""] ?? "plan",
-      planExerciseId: str(e.p) ?? str(e.i),
     };
+    if (e.p !== "") ex.planExerciseId = str(e.p) ?? str(e.i);
     if (e.w) ex.swappedFrom = str(e.w);
     if (e.k) ex.skipped = true;
     if (e.t) ex.note = str(e.t);

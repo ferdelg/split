@@ -9,7 +9,7 @@
 import type {
   BestsDoc, DayPlan, ExerciseLog, ISODate, ProposedWorkout, RepTarget, Session, SetLog, Split, SplitsDoc, Timestamp, Weekday,
 } from "../types";
-import { weekdayOf } from "../lib/date";
+import { addDays, weekdayOf } from "../lib/date";
 import { uid } from "../lib/ids";
 import { lastFor, normalizeName } from "./history";
 import { activeSplit } from "./split";
@@ -147,6 +147,23 @@ export function skipExercise(s: Session, exId: string, skipped: boolean): Sessio
 export function swapExercise(s: Session, exId: string, newName: string, lastWeightKg: number | null): Session {
   const name = newName.trim();
   if (!name) return s;
+  const cur = s.exercises.find((e) => e.id === exId);
+  const doneSets = cur ? cur.sets.filter((x) => x.done) : [];
+  if (cur && doneSets.length) {
+    // Sets already done stay logged under the original; the swap gets the rest.
+    const left = Math.max(1, cur.sets.length - doneSets.length);
+    const kept: ExerciseLog = { ...cur, sets: doneSets };
+    const swap: ExerciseLog = {
+      id: uid("x"),
+      name,
+      reps: { ...cur.reps },
+      sets: Array.from({ length: left }, () => ({ reps: cur.sets[cur.sets.length - 1].reps, weightKg: lastWeightKg, done: false })),
+      source: "swapped",
+      swappedFrom: cur.swappedFrom ?? cur.name,
+    };
+    const exercises = s.exercises.flatMap((e) => (e.id === exId ? [kept, swap] : [e]));
+    return { ...s, exercises };
+  }
   return withEx(s, exId, (e) => ({
     ...e,
     name,
@@ -253,4 +270,22 @@ export function weightsChanged(s: Session, split: Split | null): boolean {
     }
   }
   return false;
+}
+
+/** How long after its last set a session from yesterday still counts as today's (a workout across midnight). */
+export const MIDNIGHT_GRACE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Is this in-progress session "today's" for the UI? Yes if it's dated today,
+ * or dated yesterday and touched (started or a set done) within the last
+ * MIDNIGHT_GRACE_MS, so a workout that runs past midnight isn't stranded.
+ * Older sessions are "stale": Today offers to finish them on their own date.
+ */
+export function isCurrentSession(s: Session | null, today: ISODate, nowMs: number): boolean {
+  if (!s) return false;
+  if (s.date === today) return true;
+  if (addDays(s.date, 1) !== today) return false;
+  let last = s.startedAt;
+  for (const e of s.exercises) for (const x of e.sets) if (x.doneAt != null && x.doneAt > last) last = x.doneAt;
+  return nowMs - last < MIDNIGHT_GRACE_MS;
 }

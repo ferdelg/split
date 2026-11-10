@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { getState, useApp } from "../../data/state";
+import { getState, now, useApp } from "../../data/state";
 import { actions } from "../../data/actions";
-import { completedSets, isExerciseComplete, resolveToday } from "../../data/session";
+import { completedSets, isCurrentSession, isExerciseComplete, resolveToday } from "../../data/session";
 import { lastFor, sessionOn, streak, volumeKg } from "../../data/history";
 import { WEEKDAY_NAMES, WEEK_ORDER, weekdayOf } from "../../lib/date";
 import { formatReps, formatVolume, parseReps, stepWeight } from "../../lib/units";
@@ -31,7 +31,7 @@ function previewFromPlan(plan: DayPlan): ExerciseLog[] {
 /** Today's session must exist before a change; returns the real exercise id for a (possibly preview) id. */
 function ensureExerciseId(id: string): string | null {
   const s = getState();
-  if (s.active && s.active.date === s.today) return id;
+  if (isCurrentSession(s.active, s.today, now().getTime())) return id;
   if (s.active) return null; // a stale session is waiting
   actions.startWorkout();
   const a = getState().active;
@@ -473,8 +473,10 @@ export function Today() {
   const [sheet, setSheet] = useState<SheetState>(null);
   const unit = profile.units;
 
-  const stale = active && active.date < today ? active : null;
-  const session = active && active.date === today ? active : null;
+  // A workout that runs past midnight stays current (isCurrentSession's grace window).
+  const current = isCurrentSession(active, today, now().getTime());
+  const stale = active && !current ? active : null;
+  const session = current ? active : null;
   const resolved = resolveToday(today, splits, picked);
   const plan = resolved.plan;
   const finished = !session ? sessionOn(today, logs) : null;
@@ -536,9 +538,7 @@ export function Today() {
             {stale.title}: <span class="num">{plural(completedSets(stale), "set")}</span> done. Save it to its own day, or let it go to start today's.
           </p>
           <div class="row-actions">
-            <button type="button" class="btn btn--secondary" onClick={() => actions.discardWorkout()}>
-              Discard
-            </button>
+            <ConfirmButton class="btn btn--secondary" label="Discard" onConfirm={() => actions.discardWorkout()} />
             <button type="button" class="btn btn--primary btn--grow" onClick={() => actions.finishWorkout()}>
               Finish it
             </button>
@@ -623,12 +623,33 @@ export function Today() {
 
 // ── Sticky finish bar (rendered by the shell above the tab bar) ────────────
 
+/** A destructive button that needs a second tap within 4 s ("Tap again to discard"). */
+function ConfirmButton(props: { class: string; label: string; onConfirm: () => void }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button
+      type="button"
+      class={props.class}
+      onClick={() => {
+        if (!armed) return setArmed(true);
+        setArmed(false);
+        props.onConfirm();
+      }}
+    >
+      {armed ? "Tap again to discard" : props.label}
+    </button>
+  );
+}
+
 export function FinishBar() {
   const active = useApp((s) => s.active);
   const today = useApp((s) => s.today);
-  const [confirm, setConfirm] = useState(false);
-  useEffect(() => setConfirm(false), [active?.id]);
-  if (!active || active.date !== today) return null;
+  if (!active || !isCurrentSession(active, today, now().getTime())) return null;
   const done = completedSets(active);
   const total = active.exercises.filter((e) => !e.skipped).reduce((n, e) => n + e.sets.length, 0);
   return (
@@ -643,16 +664,7 @@ export function FinishBar() {
             Finish workout
           </button>
         ) : (
-          <button
-            type="button"
-            class="btn btn--secondary btn--grow btn--big"
-            onClick={() => {
-              if (!confirm) return setConfirm(true);
-              actions.discardWorkout();
-            }}
-          >
-            {confirm ? "Tap again to discard" : "Discard workout"}
-          </button>
+          <ConfirmButton class="btn btn--secondary btn--grow btn--big" label="Discard workout" onConfirm={() => actions.discardWorkout()} />
         )}
       </div>
     </div>

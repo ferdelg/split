@@ -61,6 +61,9 @@ function commitActive(s: Session | null): void {
   else void store().delete(K.active);
 }
 
+/** Bumped by deleteEverything, so late async work (coach replies, photo saves) never writes after a delete. */
+let epoch = 0;
+
 function commitChat(chat: ChatMessage[]): void {
   setState({ chat });
   const key = chatKey(getState().today);
@@ -68,19 +71,53 @@ function commitChat(chat: ChatMessage[]): void {
   else void store().delete(key);
 }
 
-/** Write a month log (state + store), loading it first if it isn't in memory. */
-function updateLog(month: string, fn: (log: MonthLog) => MonthLog): void {
+/**
+ * Write a month log (state + store), loading it first if it isn't in memory.
+ * Resolves false, writing nothing, when that month couldn't be read: an
+ * unreadable month is never replaced by a (nearly) empty one.
+ */
+function updateLog(month: string, fn: (log: MonthLog) => MonthLog): Promise<boolean> {
   const apply = (base: MonthLog) => {
     const next = fn(base);
     setState((s) => ({ logs: { ...s.logs, [month]: next } }));
     store().set(logKey(month), packMonthLog(next));
+    return true;
   };
   const inMem = getState().logs[month];
-  if (inMem) return apply(inMem);
-  // Not loaded (e.g. a stale session from an older month): never overwrite unseen data.
-  void store()
+  if (inMem) return Promise.resolve(apply(inMem));
+  return store()
     .load<unknown>(logKey(month))
-    .then((raw) => apply(getState().logs[month] ?? normalizeMonthLog(raw, month)));
+    .then((raw) => {
+      if (store().didFail(logKey(month))) return false;
+      return apply(getState().logs[month] ?? normalizeMonthLog(raw, month));
+    });
+}
+
+/**
+ * Delete the stored in-progress session only once everything pending (the
+ * finished log) is acknowledged by the store, so closing the app mid-save
+ * can't lose the workout. A leftover `active` whose id is already in the log
+ * is dropped at boot (state.ts).
+ */
+function retireActive(): void {
+  const done = () => {
+    const st = getState().storeStatus;
+    return st.pending === 0 && !st.error;
+  };
+  const del = () => {
+    if (!getState().active) void store().delete(K.active);
+  };
+  void store()
+    .flush()
+    .then(() => {
+      if (done()) return del();
+      const off = store().onStatus((st) => {
+        if (st.pending === 0 && !st.error) {
+          off();
+          del();
+        }
+      });
+    });
 }
 
 /** Heaviest weight of her last session of that exercise, or null. */
@@ -357,14 +394,19 @@ export const actions: AppActions = {
   async setSessionPhoto(file) {
     const s = ensureSession();
     const { media } = services();
+    const ep = epoch;
     try {
       const saved = await media.savePhoto(s.date, file);
+      if (ep !== epoch) {
+        void media.deletePhoto(saved.photoId).catch(() => {});
+        return;
+      }
       const cur = getState().active;
       if (!cur || cur.id !== s.id) {
         // The workout was finished or discarded meanwhile: attach to its log, if any.
         const logged = sessionOn(s.date, getState().logs);
         if (logged && logged.id === s.id) {
-          updateLog(monthOf(s.date), (log) => ({ ...log, days: { ...log.days, [s.date]: { ...logged, photoId: saved.photoId, thumb: saved.thumb } } }));
+          void updateLog(monthOf(s.date), (log) => ({ ...log, days: { ...log.days, [s.date]: { ...logged, photoId: saved.photoId, thumb: saved.thumb } } }));
         } else void media.deletePhoto(saved.photoId);
         return;
       }
@@ -402,19 +444,30 @@ export const actions: AppActions = {
     const split = st.splits?.splits.find((x) => x.id === s.from?.splitId) ?? null;
     const summary = summarize(fin, pbs, finishLine, S.weightsChanged(fin, split));
     // A stale session from an earlier date goes to ITS month and date.
-    updateLog(monthOf(fin.date), (log) => {
+    const inMemory = !!getState().logs[monthOf(fin.date)];
+    const write = updateLog(monthOf(fin.date), (log) => {
       const existing = log.days[fin.date];
-      // One session per date: a second one that day is merged into the first.
-      const merged: Session = existing
-        ? { ...existing, exercises: [...existing.exercises, ...fin.exercises], bests: [...(existing.bests ?? []), ...pbs], finishLine, finishedAt: t, note: fin.note ?? existing.note, photoId: fin.photoId ?? existing.photoId, thumb: fin.thumb ?? existing.thumb }
-        : fin;
+      // One session per date: a second one that day is merged into the first
+      // (the same session again, e.g. after an interrupted finish, replaces it).
+      const merged: Session =
+        existing && existing.id !== fin.id
+          ? { ...existing, exercises: [...existing.exercises, ...fin.exercises], bests: [...(existing.bests ?? []), ...pbs], finishLine, finishedAt: t, note: fin.note ?? existing.note, photoId: fin.photoId ?? existing.photoId, thumb: fin.thumb ?? existing.thumb }
+          : fin;
       return { ...log, days: { ...log.days, [fin.date]: merged } };
     });
-    setState({ bests, summary, pickedWeekday: null, celebration: { kind: "finish", pb: pbs.length > 0, at: t } });
-    store().set(K.bests, bests);
-    commitActive(null);
-    void services().wakeLock.release().catch(() => {});
-    refreshBanners();
+    const finish = () => {
+      setState({ active: null, bests, summary, pickedWeekday: null, celebration: { kind: "finish", pb: pbs.length > 0, at: t } });
+      store().set(K.bests, bests);
+      retireActive();
+      void services().wakeLock.release().catch(() => {});
+      refreshBanners();
+    };
+    // The month is in memory (always true for today's): updateLog already applied it.
+    if (inMemory) return finish();
+    void write.then((ok) => {
+      if (ok) finish();
+      else pushToast({ text: "Couldn't open that month's log to save this workout. It's kept; try again in a moment.", kind: "error" });
+    });
   },
   discardWorkout() {
     const s = getState().active;
@@ -461,7 +514,7 @@ export const actions: AppActions = {
     const next: Session = { ...s };
     if (n.trim()) next.note = n;
     else delete next.note;
-    updateLog(monthOf(date), (log) => ({ ...log, days: { ...log.days, [date]: next } }));
+    void updateLog(monthOf(date), (log) => ({ ...log, days: { ...log.days, [date]: next } }));
   },
 
   // coach
@@ -470,8 +523,12 @@ export const actions: AppActions = {
     const st = getState();
     if (!t || st.chatBusy) return;
     const history = st.chat;
+    const date = st.today;
+    const ep = epoch;
     const user: ChatMessage = { id: uid("m"), role: "user", text: t, at: ts() };
-    setState({ chat: [...history, user], chatBusy: true });
+    // Her message is saved right away, so closing the app mid-reply keeps it.
+    commitChat(trimChat([...history, user]));
+    setState({ chatBusy: true });
     const { ai } = services();
     let reply: ChatMessage;
     let error: { code?: string; message: string } | undefined;
@@ -491,7 +548,14 @@ export const actions: AppActions = {
       reply = { id: uid("m"), role: "assistant", text: message, at: ts(), error: true };
       error = { message };
     }
-    commitChat(trimChat([...getState().chat, reply]));
+    if (ep !== epoch) return; // everything was deleted meanwhile
+    if (getState().today === date) commitChat(trimChat([...getState().chat, reply]));
+    else {
+      // The day rolled over while waiting: the reply belongs to the day it was asked.
+      const prev = await store().load<ChatMessage[]>(chatKey(date)).catch(() => null);
+      if (ep !== epoch) return;
+      store().set(chatKey(date), trimChat([...(Array.isArray(prev) ? prev : [...history, user]), reply]));
+    }
     setState({ chatBusy: false, coachError: error ?? null });
     refreshCaps();
   },
@@ -499,7 +563,7 @@ export const actions: AppActions = {
     const st = getState();
     const msg = st.chat.find((m) => m.id === messageId);
     if (!msg?.proposal) return;
-    if (st.active && st.active.date !== st.today) {
+    if (st.active && !S.isCurrentSession(st.active, st.today, ts())) {
       pushToast({ text: `Finish or discard ${WEEKDAY_NAMES[weekdayOf(st.active.date)]}'s workout first.`, kind: "info" });
       return;
     }
@@ -556,6 +620,7 @@ export const actions: AppActions = {
   },
   async deleteEverything() {
     const { store: st, notifications, media, wakeLock } = services();
+    epoch++;
     await st.flush();
     // Full photos in files mode live outside the store.
     if (media.mode === "files") {

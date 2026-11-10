@@ -268,6 +268,11 @@ async function renameTuesday(fl, backend, to) {
   await dlg.waitFor({ timeout: T });
   const box = dlg.locator(`role=textbox[name="Day name"s]`).first();
   await box.fill(to);
+  // WebKit occasionally drops the first fill while the sheet is still animating in.
+  if ((await box.inputValue()) !== to || !(await waitStore(backend, (d) => activeSplitOf(d.get("splits")).days[2].name === to))) {
+    await box.fill("");
+    await box.pressSequentially(to);
+  }
   await closeSheets(fl);
   must(await waitStore(backend, (d) => activeSplitOf(d.get("splits")).days[2].name === to), `split day 2 name = ${JSON.stringify(activeSplitOf(backend.data.get("splits"))?.days[2]?.name)}`);
 }

@@ -203,6 +203,8 @@ export function createStoreAdapter(raw: RawStore, backend: StoreBackend, opts: S
   const today = opts.today ?? localToday;
 
   const cache = new Map<string, unknown>();
+  /** Keys whose last load failed (as opposed to being absent). */
+  const failed = new Set<string>();
   /** Known number of chunk parts on the backend per key (0 = not chunked). */
   const chunkCounts = new Map<string, number>();
   const dirty = new Set<string>();
@@ -389,10 +391,13 @@ export function createStoreAdapter(raw: RawStore, backend: StoreBackend, opts: S
     if (!p) {
       p = fetchKey(key).then(
         (v) => {
+          failed.delete(key);
           if (!cache.has(key) && !dirty.has(key)) cache.set(key, v);
           return v;
         },
         (e) => {
+          // Not "missing": the caller must not treat this as empty data and write over it.
+          failed.add(key);
           error = `Couldn't load ${key}: ${errMsg(e)}`;
           emit(true);
           return null;
@@ -462,6 +467,7 @@ export function createStoreAdapter(raw: RawStore, backend: StoreBackend, opts: S
       return [...set].sort();
     },
     flush,
+    didFail: (key: string) => failed.has(key),
     rawList: (prefix: string) => raw.list(prefix),
     onStatus(cb) {
       listeners.add(cb);

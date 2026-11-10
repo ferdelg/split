@@ -137,9 +137,9 @@ function ProfileSection() {
         label="Goal"
         value={profile.goal ?? "none"}
         options={[
-          { value: "muscle", label: "Build muscle" },
-          { value: "fat", label: "Lose fat" },
-          { value: "consistent", label: "Stay consistent" },
+          { value: "muscle", label: "Muscle" },
+          { value: "fat", label: "Fat loss" },
+          { value: "consistent", label: "Consistency" },
         ]}
         onChange={(g) => actions.updateProfile({ goal: g === "none" ? undefined : g })}
       />
@@ -368,8 +368,13 @@ function capRows(c: Capabilities): { name: string; mode: string; why: string }[]
     },
     {
       name: "Screen awake",
-      mode: c.wakeLock ? "On during a workout" : "Not available",
-      why: c.wakeLock ? "The screen stays on while a workout is in progress." : "This browser can't keep the screen on, so it may sleep between sets.",
+      mode: { on: "On during a workout", untested: "Tried at your next workout", blocked: "Not allowed here", unsupported: "Not available" }[c.wakeLock],
+      why: {
+        on: "The screen stays on while a workout is in progress.",
+        untested: "Split asks to keep the screen on when a workout starts; this shows what happened.",
+        blocked: "Split asked to keep the screen on and was refused, so the phone may sleep between sets. Raise auto-lock in iPhone Settings if that's annoying.",
+        unsupported: "This browser can't keep the screen on, so it may sleep between sets.",
+      }[c.wakeLock],
     },
   ];
 }

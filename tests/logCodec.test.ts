@@ -26,12 +26,22 @@ function session(): Session {
 function comparable(s: Session) {
   return {
     ...s,
-    exercises: s.exercises.map((e) => ({ ...e, planExerciseId: e.planExerciseId ?? e.id, sets: e.sets.map((x) => ({ reps: x.reps, weightKg: x.weightKg == null ? null : Math.round(x.weightKg * 1e4) / 1e4, done: x.done })) })),
+    exercises: s.exercises.map((e) => ({ ...e, sets: e.sets.map((x) => ({ reps: x.reps, weightKg: x.weightKg == null ? null : Math.round(x.weightKg * 1e4) / 1e4, done: x.done })) })),
     bests: s.bests?.map((b) => ({ ...b, weightKg: b.weightKg == null ? null : Math.round(b.weightKg * 1e4) / 1e4, previous: b.previous && { ...b.previous, weightKg: Math.round(b.previous.weightKg! * 1e4) / 1e4 } })),
   };
 }
 
 describe("log codec", () => {
+  it("keeps an added exercise without a planExerciseId", () => {
+    const s = session();
+    const added = { ...s.exercises[0], id: "x_added", source: "added" as const };
+    delete (added as { planExerciseId?: string }).planExerciseId;
+    const log: MonthLog = { month: "2026-11", days: { [s.date]: { ...s, exercises: [...s.exercises, added] } } };
+    const back = normalizeMonthLog(packMonthLog(log), "2026-11").days[s.date].exercises.at(-1)!;
+    expect(back.id).toBe("x_added");
+    expect(back.planExerciseId).toBeUndefined();
+  });
+
   it("round-trips a finished session", () => {
     const s = session();
     const log: MonthLog = { month: "2026-11", days: { [s.date]: s } };

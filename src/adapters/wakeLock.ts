@@ -27,7 +27,17 @@ export function wakeLockSupported(): boolean {
   return !!api();
 }
 
-export function createWakeLock(): { acquire(): Promise<void>; release(): Promise<void> } {
+/**
+ * What actually happened, for Me → Capabilities (the API existing doesn't mean
+ * the frame may use it: a sandboxed iframe needs the screen-wake-lock policy).
+ */
+export type WakeLockStatus = "unsupported" | "untested" | "on" | "blocked";
+
+export function initialWakeLockStatus(): WakeLockStatus {
+  return wakeLockSupported() ? "untested" : "unsupported";
+}
+
+export function createWakeLock(onStatus: (s: WakeLockStatus) => void = () => {}): { acquire(): Promise<void>; release(): Promise<void> } {
   let held = false;
   let sentinel: SentinelLike | null = null;
   let listening = false;
@@ -43,11 +53,15 @@ export function createWakeLock(): { acquire(): Promise<void>; release(): Promise
         return;
       }
       sentinel = s;
+      onStatus("on");
       s.addEventListener?.("release", () => {
         if (sentinel === s) sentinel = null;
       });
-    } catch {
-      /* not allowed here: the workout works the same, the screen may dim */
+    } catch (e) {
+      // Hidden pages can't hold a lock (that's retried on visible); anything else is a refusal.
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      if (!hidden) onStatus("blocked");
+      void e; /* the workout works the same, the screen may dim */
     }
   };
 

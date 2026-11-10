@@ -15,7 +15,7 @@ index.html → src/main.tsx
   │   store.ts          write-through cache over flinsh.store | localStorage | memory
   │   ai.ts             flinsh.ai.chat | direct Anthropic (standalone, key in localStorage) | none
   │   notifications.ts  flinsh.notifications.schedule | in-app banners
-  │   media.ts          flinsh.files (proposed) | inline JPEG in the store, budgeted
+  │   media.ts          flinsh.files (files:user) | inline JPEG in the store, budgeted
   │   insets.ts         --flinsh-inset-* + {__flinsh:"insets"} listener
   │   wakeLock.ts       navigator.wakeLock during a workout, silent fallback
   ├─ lib/             pure helpers: date, units, ids, reminders, finishLines
@@ -74,19 +74,22 @@ Keys use `/` (`:` is rejected). Everything is JSON, weights in kg.
 | `settings` | `Settings` | < 1 KB |
 | `splits` | `SplitsDoc`: all splits (active + archived) and the active history | 2–6 KB per split |
 | `active` | `Session` in progress, or deleted | < 4 KB |
-| `logs/YYYY-MM` | `MonthLog`: finished sessions of that month, keyed by date | ~ 2–3 KB per session |
+| `logs/YYYY-MM` | `MonthLog`, packed on disk (`logCodec.ts`): finished sessions of that month | ~ 1.2 KB per session packed |
 | `bests` | `BestsDoc`: per-exercise records, derived, cached | ~ 300 B per exercise |
-| `chat/YYYY-MM-DD` | `ChatMessage[]`, trimmed to 40 messages / 24 KB; deleted after 30 days | < 24 KB |
-| `photo/<id>` | `StoredPhoto` (inline mode only), ≤ 40 KB JPEG, at most 20 kept | ≤ 54 KB each (base64) |
+| `chat/YYYY-MM-DD` | `ChatMessage[]`, trimmed to 30 messages / 8 KB; deleted after 30 days | ≤ 8 KB |
+| `photo/<id>` | `StoredPhoto` (inline mode only), ≤ 30 KB JPEG, at most 20 kept | ≤ 40 KB each (base64) |
 
 Budget: 2 MB and 1,000 keys. Three years of five-day weeks is 36 `logs/*`
 keys of ~ 22 sessions each; the size test (`tests/storeSize.test.ts`)
 generates that with realistic sessions (6 exercises × 4 sets, notes, a
 thumb on a third of days) and asserts the total plus 20 photos plus 30 chat
 days stays under 2 MB and 1,000 keys, and that every month value is under
-256 KB. Thumbs are 48 px JPEG data URLs (~1.2 KB) and are the biggest part
-of a log; if the projection is tight, thumbs are dropped from months older
-than a year (`compactOldThumbs`).
+256 KB. Logs are packed on disk (`src/data/logCodec.ts`: short keys, kg to
+4 decimals, run-length sets, no per-set doneAt), ~1.2 KB per session. Thumbs
+(48 px JPEG data URLs, ~1.2 KB) are dropped from months older than a year once
+the packed logs pass 650 KB (`compactOldThumbs`). Measured worst case (every
+cap full): 1.80 MB. On a quota error the store frees the oldest chat day, then
+the oldest photo; never logs.
 
 ### Splits
 
@@ -318,7 +321,7 @@ estimates are always labelled "rough estimate".
 
 `chat/<date>` keeps text only (`ChatMessage`); a proposal is replayed to the
 model as text (`[Proposed for today: Squat 3×5 @ 135 lb, …; she chose: use
-for today]`). Trimmed to the last 40 messages / 24 KB; the request includes
+for today]`). Trimmed to the last 30 messages / 8 KB; the request includes
 the last 12 messages. Chats older than 30 days are deleted at boot.
 
 ### Errors
@@ -355,11 +358,11 @@ if no workout is done and it wasn't dismissed.
 
 `media.ts`:
 
-- `files` mode (when `window.flinsh.files` exists, proposed): resize to a
-  1600 px max edge, JPEG 0.85, `files.put("split/photo/<id>.jpg", blob)`.
-- `inline` mode (today): resize to a 640 px max edge, re-encode through a
+- `files` mode (when `window.flinsh.files` exists): resize to a
+  1600 px max edge, JPEG 0.85, `files.put(blob, {name: "split/photo/<id>.jpg", mime})`; `files.get(id)` returns a ~10 min signed URL, fetched fresh each time.
+- `inline` mode (standalone, or no `files:user` grant): resize to a 640 px max edge, re-encode through a
   canvas (which strips EXIF), lower the JPEG quality from 0.8 in steps, and
-  then the size, until the payload is ≤ 40 KB (`fitJpeg`); store under
+  then the size, until the JPEG is ≤ 30 KB, ~40 KB as stored base64 (`fitJpeg`); store under
   `photo/<id>` (`id = <date>-<rand>`, so ids sort by date); keep the 20
   newest (`planEviction`) and delete the rest; the day's log keeps its
   48 px thumb (`photoId` stays; `loadPhoto` returns null for an evicted

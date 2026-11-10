@@ -832,7 +832,7 @@
   color: var(--muted);
 }
 .today-sub .link-btn {
-  min-height: 40px;
+  min-height: var(--tap);
   padding: 0;
 }
 .rest-card .rest-line {
@@ -887,6 +887,7 @@
 }
 .ex-tools .link-btn {
   padding: 0 var(--s2);
+  color: var(--ink);
 }
 .ex-meta {
   display: flex;
@@ -933,7 +934,7 @@
   margin-left: auto;
   border: 0;
   background: none;
-  color: var(--accent-ink);
+  color: var(--ink);
   font-weight: 650;
 }
 

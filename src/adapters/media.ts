@@ -1,11 +1,11 @@
 /**
  * Photos (PLAN "Photos").
  *
- * - `files` mode, when window.flinsh.files exists (proposed): resize to a
+ * - `files` mode, when window.flinsh.files exists (files:user): resize to a
  *   1600 px max edge, JPEG 0.85, files.put("split/photo/<id>.jpg").
- * - `inline` mode (today): resize to a 640 px max edge and re-encode through
+ * - `inline` mode (standalone fallback): resize to a 640 px max edge and re-encode through
  *   a canvas (which strips EXIF), lowering JPEG quality and then size until
- *   the payload is ≤ 40 KB; stored as StoredPhoto under photo/<id>; only the
+ *   the JPEG is ≤ 30 KB (~40 KB base64); stored as StoredPhoto under photo/<id>; only the
  *   20 newest are kept. Every session also keeps a 48 px thumb in its log.
  *
  * Works in an opaque-origin sandbox: no localStorage, every browser API is
@@ -168,8 +168,9 @@ export function createMediaAdapter(bridge: FlinshBridge | null, store: StoreAdap
         const img = await decode(file);
         try {
           const blob = await jpegBlob(draw(img, FILES_MAX_EDGE, 1), 0.85);
-          const r = await files.put(`split/photo/${newPhotoId(date)}.jpg`, blob, { contentType: "image/jpeg" });
-          const photoId = typeof r === "string" ? r : r?.id;
+          // flinsh.files.put(blob, {name, mime}) → {id, size, name, mime}. Names may hold "/".
+          const r = await files.put(blob, { name: `split/photo/${newPhotoId(date)}.jpg`, mime: "image/jpeg" });
+          const photoId = r && typeof r.id === "string" ? r.id : null;
           if (!photoId) throw new Error("Couldn't save the photo.");
           return { photoId, thumb: await thumbOf(img), evicted: [] };
         } finally {
@@ -177,6 +178,7 @@ export function createMediaAdapter(bridge: FlinshBridge | null, store: StoreAdap
         }
       },
       async loadPhoto(photoId) {
+        // A signed URL valid ~10 minutes: fetch a fresh one every time, never store it.
         try {
           return (await files.get(photoId)) ?? null;
         } catch {

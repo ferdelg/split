@@ -178,7 +178,7 @@ export function coachErrorMessage(code: string | undefined, reason: AIFailure): 
 // notifications.ts
 export function createNotificationsAdapter(bridge: FlinshBridge | null): NotificationsAdapter;
 // media.ts
-export const PHOTO_MAX_EDGE = 640, PHOTO_MAX_BYTES = 40_000, PHOTO_KEEP = 20, THUMB_EDGE = 48, FILES_MAX_EDGE = 1600;
+export const PHOTO_MAX_EDGE = 640, PHOTO_MAX_BYTES = 30_000, PHOTO_KEEP = 20, THUMB_EDGE = 48, FILES_MAX_EDGE = 1600;
 export function fitJpeg(encode: (quality: number, scale: number) => Promise<string>, maxBytes: number): Promise<string>; // returns data URL
 export function dataUrlBytes(dataUrl: string): number;  // decoded payload bytes
 export function planEviction(ids: string[], keep: number): string[];  // ids to delete (oldest first)

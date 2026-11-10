@@ -100,6 +100,42 @@ describe("inline media adapter (fake canvas)", () => {
     HTMLCanvasElement.prototype.toDataURL = saved.toDataURL as HTMLCanvasElement["toDataURL"];
   });
 
+  it("uses flinsh.files.put(blob, {name, mime}) and keeps the returned id", async () => {
+    const savedToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (cb: BlobCallback, type?: string) {
+      cb(new Blob([new Uint8Array(this.width)], { type }));
+    };
+    try {
+      const m = createMockFlinsh();
+      const puts: { blob: Blob; meta: { name: string; mime: string } }[] = [];
+      const deleted: string[] = [];
+      m.bridge.files = {
+        put: async (blob: Blob, meta: { name: string; mime: string }) => (puts.push({ blob, meta }), { id: "f_" + "a".repeat(24), size: blob.size, name: meta.name, mime: meta.mime }),
+        get: async (id: string) => `https://files.example/${id}?sig=x`,
+        list: async () => [],
+        delete: async (id: string) => (deleted.push(id), true),
+      } as unknown as NonNullable<typeof m.bridge.files>;
+      const store = createStoreAdapter(flinshRaw(m.bridge.store), "flinsh", { flushDelayMs: 0 });
+      await store.init([]);
+      const media = createMediaAdapter(m.bridge, store);
+      expect(media.mode).toBe("files");
+      const r = await media.savePhoto("2026-11-10", new Blob(["fake"], { type: "image/jpeg" }));
+      expect(r.photoId).toBe("f_" + "a".repeat(24));
+      expect(puts).toHaveLength(1);
+      expect(puts[0].meta.mime).toBe("image/jpeg");
+      expect(puts[0].meta.name).toMatch(/^split\/photo\/2026-11-10-.+\.jpg$/);
+      expect(puts[0].blob.size).toBe(1600); // 1600 px max edge
+      expect(r.thumb).toMatch(/^data:image\/jpeg/);
+      expect(await media.loadPhoto(r.photoId)).toContain(r.photoId);
+      await media.deletePhoto(r.photoId);
+      expect(deleted).toEqual([r.photoId]);
+      await store.flush();
+      expect([...m.storeData.keys()].filter((k) => k.startsWith("photo/"))).toEqual([]);
+    } finally {
+      HTMLCanvasElement.prototype.toBlob = savedToBlob;
+    }
+  });
+
   it("is inline without flinsh.files; 21st photo evicts the oldest; stays in budget", async () => {
     const m = createMockFlinsh();
     const store = createStoreAdapter(flinshRaw(m.bridge.store), "flinsh", { flushDelayMs: 0 });

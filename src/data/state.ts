@@ -5,6 +5,7 @@
  * writes only housekeeping (chat pruning, bests rebuild, thumb compaction).
  */
 import { packMonthLog } from "./logCodec";
+import { isCurrentSession } from "./session";
 import { useLayoutEffect, useReducer, useRef } from "preact/hooks";
 import type {
   AIAdapter, AppState, BestsDoc, Capabilities, ChatMessage, FlinshBridge, MediaAdapter, MonthKey, MonthLog, NotificationsAdapter,
@@ -15,7 +16,7 @@ import { safeLocal, waitForBridge } from "../adapters/env";
 import { createMediaAdapter } from "../adapters/media";
 import { createNotificationsAdapter } from "../adapters/notifications";
 import { createStoreAdapter, flinshRaw, installBackgroundFlush, localRaw, memoryRaw } from "../adapters/store";
-import { createWakeLock, wakeLockSupported } from "../adapters/wakeLock";
+import { createWakeLock, initialWakeLockStatus } from "../adapters/wakeLock";
 import { addDays, addMonths, monthOf, msUntilNextMidnight, todayISO } from "../lib/date";
 import { uid } from "../lib/ids";
 import { buildSchedule, dueBanners } from "../lib/reminders";
@@ -49,7 +50,7 @@ export function setClock(fn: (() => Date) | undefined): void {
 // ── store ──────────────────────────────────────────────────────────────────
 
 function baseCaps(): Capabilities {
-  return { inFlinsh: false, store: "memory", ai: "none", notifications: "in-app", photos: "inline", wakeLock: wakeLockSupported() };
+  return { inFlinsh: false, store: "memory", ai: "none", notifications: "in-app", photos: "inline", wakeLock: initialWakeLockStatus() };
 }
 
 export function initialState(): AppState {
@@ -152,13 +153,15 @@ function capsFor(s: Services): Capabilities {
   } catch {
     /* keep none */
   }
+  const wl = getState().caps.wakeLock;
   return {
     inFlinsh: !!s.bridge,
     store: s.store.backend,
     ai,
     notifications: s.notifications.mode,
     photos: s.media.mode,
-    wakeLock: wakeLockSupported(),
+    // Keep what a real request found; otherwise whether the API exists at all.
+    wakeLock: wl === "on" || wl === "blocked" ? wl : initialWakeLockStatus(),
   };
 }
 
@@ -213,7 +216,7 @@ export function refreshBanners(): void {
   const schedule = buildSchedule(activeSplit(s.splits), s.settings.reminders, locale());
   const hasDone = (x: Session | null) => !!x && x.exercises.some((e) => !e.skipped && e.sets.some((set) => set.done));
   // Mid-workout counts as done: no nagging at the gym.
-  const doneToday = hasDone(sessionOn(s.today, s.logs)) || (s.active?.date === s.today && hasDone(s.active));
+  const doneToday = hasDone(sessionOn(s.today, s.logs)) || (isCurrentSession(s.active, s.today, now().getTime()) && hasDone(s.active));
   const banners = dueBanners(now(), schedule, doneToday, s.settings.dismissedBanners);
   const sig = (b: { id: string; title: string }[]) => b.map((x) => `${x.id}|${x.title}`).join(",");
   if (sig(banners) !== sig(s.banners)) setState({ banners });
@@ -236,13 +239,31 @@ function mergeLogs(loaded: Record<MonthKey, MonthLog>): void {
 }
 
 /** Load months not yet in state. */
-export async function ensureMonths(months: MonthKey[]): Promise<void> {
+/**
+ * Load months not yet in memory. A month whose read FAILED stays out of
+ * state.logs (so nothing writes an empty month over it); returns false then.
+ */
+export async function ensureMonths(months: MonthKey[]): Promise<boolean> {
   const missing = months.filter((m) => !getState().logs[m]);
-  if (!missing.length) return;
-  const vals = await services().store.loadMany<unknown>(missing.map(logKey));
+  if (!missing.length) return true;
+  const { store } = services();
+  const vals = await store.loadMany<unknown>(missing.map(logKey));
   const out: Record<MonthKey, MonthLog> = {};
-  for (const m of missing) out[m] = normalizeMonthLog(vals[logKey(m)], m);
+  let ok = true;
+  for (const m of missing) {
+    if (store.didFail(logKey(m))) ok = false;
+    else out[m] = normalizeMonthLog(vals[logKey(m)], m);
+  }
   mergeLogs(out);
+  return ok;
+}
+
+/** Thrown by initApp when stored data couldn't be read; the UI offers "Try again". */
+export class LoadError extends Error {
+  constructor(public keys: string[]) {
+    super(`Couldn't load ${keys.join(", ")}`);
+    this.name = "LoadError";
+  }
 }
 
 // ── day rollover ───────────────────────────────────────────────────────────
@@ -305,14 +326,16 @@ export async function housekeeping(): Promise<void> {
     console.warn("[split] chat pruning failed", e);
   }
   // 2. Every month log (the streak and exercise history look back further than two months).
+  let allLoaded = false;
   try {
     const months = (await store.list("logs/")).map((k) => k.slice("logs/".length)).filter((m) => /^\d{4}-\d{2}$/.test(m));
-    await ensureMonths(months);
+    allLoaded = await ensureMonths(months);
   } catch (e) {
     console.warn("[split] loading logs failed", e);
   }
   // 3. Bests: rebuild when missing, from another version, or not through the latest session.
-  try {
+  //    Only from a complete history: a partial rebuild would forget records.
+  if (allLoaded) try {
     const sessions = allSessions(state.logs);
     const latest = sessions.length ? sessions[sessions.length - 1].date : null;
     const stored = normalizeBests(store.peek<unknown>(K.bests));
@@ -372,7 +395,7 @@ export async function initApp(opts: { bridge?: FlinshBridge | null; bridgeTimeou
       notifications: createNotificationsAdapter(bridge),
       media: createMediaAdapter(bridge, store),
       bridge,
-      wakeLock: createWakeLock(),
+      wakeLock: createWakeLock((w) => setState((st) => ({ caps: { ...st.caps, wakeLock: w } }))),
     };
     setState({ caps: capsFor(svc) });
 
@@ -390,7 +413,11 @@ export async function initApp(opts: { bridge?: FlinshBridge | null; bridgeTimeou
     const today = todayISO(now());
     const month = monthOf(today);
     const months = [month, addMonths(month, -1)];
-    await store.init([K.profile, K.settings, K.splits, K.active, K.bests, ...months.map(logKey), chatKey(today)]);
+    const preload = [K.profile, K.settings, K.splits, K.active, K.bests, ...months.map(logKey), chatKey(today)];
+    await store.init(preload);
+    // A failed read is not "no data": never show onboarding or write over what's there.
+    const failedKeys = preload.filter((k) => store.didFail(k));
+    if (failedKeys.length) throw new LoadError(failedKeys);
 
     const t = now().getTime();
     const profile = normalizeProfile(store.peek<unknown>(K.profile), today, t);
@@ -399,7 +426,12 @@ export async function initApp(opts: { bridge?: FlinshBridge | null; bridgeTimeou
     const logs: Record<MonthKey, MonthLog> = {};
     for (const m of months) logs[m] = normalizeMonthLog(store.peek<unknown>(logKey(m)), m);
     // A stale active session (earlier date) is kept: Today offers "Finish it" or "Discard".
-    const active = normalizeSession(store.peek<unknown>(K.active));
+    let active = normalizeSession(store.peek<unknown>(K.active));
+    // Finished, but the app closed before `active` was deleted (actions.retireActive).
+    if (active && logs[monthOf(active.date)]?.days[active.date]?.id === active.id) {
+      active = null;
+      void store.delete(K.active);
+    }
     const chat: ChatMessage[] = normalizeChat(store.peek<unknown>(chatKey(today)));
     setState({
       today,
@@ -411,7 +443,7 @@ export async function initApp(opts: { bridge?: FlinshBridge | null; bridgeTimeou
       bests: normalizeBests(store.peek<unknown>(K.bests)) ?? emptyBests(),
       chat,
     });
-    if (active && active.date === today) void svc.wakeLock.acquire();
+    if (isCurrentSession(active, today, now().getTime())) void svc.wakeLock.acquire();
 
     syncReminders();
     refreshBanners();
@@ -439,10 +471,18 @@ export async function initApp(opts: { bridge?: FlinshBridge | null; bridgeTimeou
     cleanups.push(() => clearTimeout(hk));
   } catch (e) {
     console.error("[split] init failed", e);
+    // Unreadable data, or nothing loaded yet: show the boot error with "Try again".
+    // Rendering anyway would show onboarding, which would write over her data.
+    if (e instanceof LoadError || !getState().profile) throw e;
     if (!svc) svc = fallbackServices();
     pushToast({ text: "Something went wrong while loading. Your saved data is untouched; try reopening the app.", kind: "error", ttl: 8000 });
     setState({ ready: true });
   }
+}
+
+/** Tear down the running app (timers, listeners, state) so initApp can run again ("Try again"). */
+export function resetApp(): void {
+  resetForTests();
 }
 
 /** Tests only: drop listeners, timers, services, the clock and state. */
