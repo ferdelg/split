@@ -1,0 +1,9 @@
+{
+  "flinsh": "2",
+  "name": "Split",
+  "description": "Your gym split, your sets and weights, and every day you showed up.",
+  "type": "app",
+  "entrypoint": "dist/index.html",
+  "permissions": ["store:user", "ai", "notifications", "files:user"],
+  "statusBar": "dark"
+}

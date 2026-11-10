@@ -1,0 +1,123 @@
+/*
+ * Split design tokens. The only place colors, type and spacing are defined.
+ * Direction: a training notebook. Warm paper and ink, ruled hairlines, one
+ * strong vermilion accent, big rounded tabular numbers. Dark is the default
+ * theme; html[data-theme] is "dark" | "light", and "system" maps to one of
+ * them in JS (prefers-color-scheme).
+ *
+ * Contrast (WCAG, checked in tests/contrast.test.ts):
+ *   dark  ink/bg 16.4, muted/bg 8.1, muted/surface 7.4, accent/bg 7.3, on-accent/accent 7.3
+ *   light ink/bg 15.6, muted/bg 6.3, muted/surface-2 5.7, accent-ink/bg 5.3, on-accent/accent 5.2
+ *   --faint is ~3.7:1: decoration and large numerals only, never body text.
+ */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121110;
+  --surface: #1c1b19;
+  --surface-2: #262420;
+  --surface-3: #312e29;
+  --hairline: #3a3732;
+  --ink: #f3efe7;
+  --muted: #b0a99c;
+  --faint: #7d776c;
+  --accent: #ff7a45;
+  /* accent used as text/icons on bg (same as accent in dark) */
+  --accent-ink: #ff8a5c;
+  --on-accent: #1a0f08;
+  --accent-soft: rgba(255, 122, 69, 0.16);
+  --done: var(--accent);
+  --success-ink: #8fd19e;
+  --error-ink: #ffb4a1;
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --scrim: rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f2ec;
+  --surface: #fffdf9;
+  --surface-2: #ece7de;
+  --surface-3: #e2dccf;
+  --hairline: #d9d1c3;
+  --ink: #1b1a17;
+  --muted: #5d584e;
+  --faint: #8a8478;
+  --accent: #c2410c;
+  --accent-ink: #b23b0a;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(194, 65, 12, 0.1);
+  --done: var(--accent);
+  --success-ink: #2f6b3c;
+  --error-ink: #9a2b0b;
+  --shadow: 0 1px 0 rgba(27, 26, 23, 0.06), 0 8px 24px rgba(27, 26, 23, 0.08);
+  --scrim: rgba(27, 26, 23, 0.4);
+}
+
+:root {
+  /* type */
+  --font-ui: system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-scale: 1;
+  --fs-body: calc(17px * var(--text-scale));
+  --fs-small: calc(16px * var(--text-scale)); /* never smaller than 16 */
+  --fs-label: calc(16px * var(--text-scale));
+  --fs-title: calc(22px * var(--text-scale));
+  --fs-display: calc(34px * var(--text-scale));
+  --fs-number: calc(28px * var(--text-scale));
+  --fs-number-xl: calc(48px * var(--text-scale));
+  --fw-regular: 400;
+  --fw-medium: 560;
+  --fw-bold: 750;
+  --fw-heavy: 850;
+  --tracking-tight: -0.02em;
+  --tracking-caps: 0.06em;
+
+  /* space (4 px grid) */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+  --gutter: 16px;
+
+  /* shape */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+
+  /* targets */
+  --tap: 48px;
+  --chip: 52px;
+  --tabbar-h: 60px;
+
+  /* motion (≤ 250 ms) */
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 240ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-pop: cubic-bezier(0.3, 1.6, 0.5, 1);
+
+  /* safe areas: shell vars first, then env(), then a floor */
+  --inset-top: max(var(--flinsh-inset-top, 0px), env(safe-area-inset-top, 0px), 20px);
+  --inset-bottom: max(var(--flinsh-inset-bottom, 0px), env(safe-area-inset-bottom, 0px), 8px);
+  --inset-left: max(var(--flinsh-inset-left, 0px), env(safe-area-inset-left, 0px));
+  --inset-right: max(var(--flinsh-inset-right, 0px), env(safe-area-inset-right, 0px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-slow: 0ms;
+  }
+}
+:root[data-motion="reduce"] {
+  --dur-fast: 0ms;
+  --dur: 0ms;
+  --dur-slow: 0ms;
+}
