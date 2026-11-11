@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { getState, useApp } from "../../data/state";
 import { actions } from "../../data/actions";
 import { activeSplit } from "../../data/split";
@@ -204,12 +204,20 @@ function DayEditor(props: { split: Split; wd: Weekday; readOnly: boolean; unit: 
   const { split, wd, readOnly, unit } = props;
   const day = split.days[wd];
   const [mode, setMode] = useState<EditorMode>({ kind: "list" });
-  const [name, setName] = useState(day.name);
-  useEffect(() => setName(day.name), [day.name]);
-  const saveName = () => {
-    const n = name.trim();
+  // The day name saves as she types, so the field is uncontrolled: a
+  // controlled value re-rendered by that save (store state updated, local
+  // state not yet) wrote an older value back and dropped letters. The DOM
+  // value is the source of truth while it has focus; otherwise it follows
+  // day.name (copy day, another split, a cleared field on blur).
+  const nameRef = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    const el = nameRef.current;
+    if (el && document.activeElement !== el && el.value !== day.name) el.value = day.name;
+  }, [day.name, mode.kind, readOnly]);
+  const saveName = (el: HTMLInputElement) => {
+    const n = el.value.trim();
     if (n && n !== day.name) actions.renameDay(wd, n);
-    else setName(day.name);
+    else if (!n) el.value = day.name;
   };
 
   let body;
@@ -276,15 +284,14 @@ function DayEditor(props: { split: Split; wd: Weekday; readOnly: boolean; unit: 
                 type="text"
                 maxLength={40}
                 enterKeyHint="done"
-                value={name}
+                ref={nameRef}
                 onInput={(e) => {
                   // Save as she types: closing the sheet doesn't always blur
                   // the field first (WebKit), and writes are coalesced anyway.
-                  const v = (e.currentTarget as HTMLInputElement).value;
-                  setName(v);
-                  if (v.trim() && v.trim() !== day.name) actions.renameDay(wd, v.trim());
+                  const v = (e.currentTarget as HTMLInputElement).value.trim();
+                  if (v && v !== day.name) actions.renameDay(wd, v);
                 }}
-                onBlur={saveName}
+                onBlur={(e) => saveName(e.currentTarget as HTMLInputElement)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();

@@ -5,7 +5,7 @@ import { activeSplit } from "../../data/split";
 import { buildCoachContext } from "../../coach/context";
 import { buildSystemPrompt } from "../../coach/prompt";
 import { getApiKey } from "../../adapters/ai";
-import { saveApiKey } from "../../data/actions";
+import { saveApiKey, saveExport } from "../../data/actions";
 import { WEEKDAY_NAMES, WEEKDAY_SHORT, WEEK_ORDER, formatTime } from "../../lib/date";
 import { defaultStep, fromDisplay, roundDisplay, toDisplay } from "../../lib/units";
 import type { Capabilities, Goal, MotionPref, ThemePref, WeightUnit } from "../../types";
@@ -364,7 +364,16 @@ function capRows(c: Capabilities): { name: string; mode: string; why: string }[]
       why:
         c.photos === "files"
           ? "Full-size photos are stored as files."
-          : "Resized to 640 px and kept under 40 KB; the 20 newest are kept, older days keep a small thumbnail.",
+          : "Resized to 640 px and about 30 KB each; the 20 newest are kept, older days keep a small thumbnail.",
+    },
+    {
+      name: "Export",
+      mode: { files: "Save a file", download: "Browser download", clipboard: "Copy to clipboard" }[c.export],
+      why: {
+        files: "Flinsh saves split-<date>.json: a download on the web, the share sheet on your phone. If that fails, it's copied instead.",
+        download: "Your browser downloads split-<date>.json.",
+        clipboard: "Saving files isn't allowed here, so the JSON is copied (or shown to select and copy).",
+      }[c.export],
     },
     {
       name: "Screen awake",
@@ -403,7 +412,6 @@ function CapabilitiesSection() {
 // ── Data ───────────────────────────────────────────────────────────────────
 
 function DataSection({ onShowExport }: { onShowExport: (json: string) => void }) {
-  const inFlinsh = useApp((s) => s.caps.inFlinsh);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -414,27 +422,11 @@ function DataSection({ onShowExport }: { onShowExport: (json: string) => void })
   const doExport = async () => {
     setBusy(true);
     try {
-      const json = await actions.exportData();
-      if (!inFlinsh) {
-        const blob = new Blob([json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `split-${getState().today}.json`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-        actions.toast("Exported your data", "success");
-      } else {
-        // Downloads are blocked in the Flinsh sandbox: clipboard, else a select-all box.
-        try {
-          await navigator.clipboard.writeText(json);
-          actions.toast("Copied your data. Paste it somewhere safe.", "success");
-        } catch {
-          onShowExport(json);
-        }
-      }
+      const { result, json } = await saveExport();
+      if (result === "saved") actions.toast(`Saved split-${getState().today}.json`, "success");
+      else if (result === "downloaded") actions.toast("Exported your data", "success");
+      else if (result === "copied") actions.toast("Copied your data. Paste it somewhere safe.", "success");
+      else onShowExport(json);
     } catch {
       actions.toast("Couldn't export right now. Try again.", "error");
     } finally {

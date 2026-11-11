@@ -397,7 +397,7 @@ vitest (jsdom), `tests/` and colocated `*.test.ts`:
   (mocked) → apply for today only (split unchanged).
 
 Harness (`npm run verify:harness`, Playwright): the built file in an iframe
-with `sandbox="allow-scripts allow-forms"` and the Flinsh CSP, a mock bridge
+with the manifest's sandbox (`allow-scripts allow-forms allow-downloads`) and the Flinsh CSP, a mock bridge
 answered from Node, WebKit and Chromium: the main flow, zero console errors,
 zero CSP violations, zero network requests; then again with `ai` rejecting
 `no_ai_key` (everything except the coach works); screenshots at 390×844 and

@@ -38,7 +38,7 @@ desktop browser for development.
 ```bash
 npm install
 npm run dev               # http://localhost:5173, standalone (localStorage)
-npm test                  # vitest: 204 tests incl. the smoke flow
+npm test                  # vitest: 208 tests incl. the smoke flow
 npm run build             # typecheck + one self-contained dist/index.html + size/URL check
 npm run verify:harness    # Playwright, Chromium + WebKit, real sandbox + CSP + mock bridge
 ```
@@ -52,7 +52,7 @@ It stays in this browser's `localStorage` only (`split.apiKey`), is sent only to
 
 `flinsh.json` declares a v2 `app` whose entrypoint is `dist/index.html` (built and
 committed, since Flinsh serves the entrypoint straight from the repo). Flinsh puts
-it in an `<iframe sandbox="allow-scripts allow-forms">` with `connect-src 'none'`,
+it in an `<iframe sandbox="allow-scripts allow-forms allow-downloads">` (the last because the manifest declares `downloads`) with `connect-src 'none'`,
 injects `window.flinsh`, and the app:
 
 1. listens for the shell's `{__flinsh: "insets"}` message;
@@ -68,6 +68,7 @@ injects `window.flinsh`, and the app:
 | `flinsh.ai.chat(request)` → Anthropic Messages body; rejects with `err.code` | exists | the coach | Coach shows why it's off; everything else works |
 | `--flinsh-inset-*` + `{__flinsh: "insets"}` | exists | safe areas | `env()`, then a minimum padding |
 | `flinsh.files.put(blob, {name, mime})` → `{id}`, `.get(id)` → signed URL (~10 min), `.delete(id)` | exists (`files:user`) | full-size photos (1600 px) | inline photos in the store (below) |
+| `flinsh.files.save(blob, filename)` | exists (`downloads`) | Export: `split-<date>.json` (a download on the web, the share sheet in the phone app) | clipboard, then a select-all box |
 | `flinsh.notifications.schedule([{id, title, body, time: "HH:MM", weekday?}])`, `.cancel(ids)` | proposed | workout-day reminders | in-app banners while Split is open |
 | manifest `statusBar: "dark"` | proposed | status-bar style | — |
 | `navigator.wakeLock` | browser API; the frame's `allow` list grants only `fullscreen` today | screen stays on during a workout | the screen may sleep |
@@ -188,12 +189,15 @@ rejecting `no_ai_key`.
 ## Verification
 
 - `npm run build`:
-  - `dist/index.html` is ~198 KB (limit 400 KB) and includes the exercise library.
+  - `dist/index.html` is ~199 KB (limit 400 KB) and includes the exercise library.
   - `scripts/check-dist.mjs` allows only `https://api.anthropic.com` (standalone path)
     plus Preact's XML namespace strings.
 - `npm run verify:harness`:
   - Loads the built file exactly as Flinsh does: CSP first, real bridge source imported
-    from `../Flinch/web/src/lib/miniAppSandbox.ts`, `sandbox="allow-scripts allow-forms"`.
+    from `../Flinch/web/src/lib/miniAppSandbox.ts`, the sandbox the manifest gets (`allow-scripts allow-forms allow-downloads`).
+  - `flinsh.files` requests (photos, Export's `save`) go through the platform's own
+    `handleFilesRequest` with an in-memory client; a second pass makes `save` fail and
+    checks the fallback.
   - Runs in Chromium and WebKit: the main flow, a no-AI pass, and layout probes at
     390×844 and 430×932 in both themes:
     - tap targets ≥ 44 px, set chips ≥ 48 px, text ≥ 16 px;
@@ -218,8 +222,9 @@ rejecting `no_ai_key`.
   the split that was active then (logged days always show what she did).
 - **Workouts past midnight** stay "today's" for 6 hours after the last set, then Today
   offers to finish them on their own date.
-- **Export** inside Flinsh: downloads are blocked by the sandbox, so it copies the JSON
-  to the clipboard or shows it in a select-all box.
+- **Export** inside Flinsh uses `flinsh.files.save` (Me → Capabilities shows "Save a file").
+  If that fails, it copies the JSON to the clipboard; if the frame refuses the clipboard too,
+  it shows the JSON in a select-all box. The export never includes the API key.
 - **One session per day.** Finishing a second workout on the same date merges it
   into that day's log.
 - **Streak rules.** Rest days neither add nor break a streak, and an extra workout on a rest day

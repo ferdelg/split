@@ -284,6 +284,8 @@ export interface Capabilities {
   photos: MediaMode;
   /** What the last request did: unsupported (no API), untested (no workout yet), on, blocked (refused, e.g. by the frame). */
   wakeLock: "unsupported" | "untested" | "on" | "blocked";
+  /** How Export hands over the file: files.save (Flinsh), a browser download (standalone), or the clipboard. */
+  export: "files" | "download" | "clipboard";
 }
 
 // ── Store adapter (same contract as lose-it) ───────────────────────────────
@@ -412,7 +414,7 @@ export interface MediaAdapter {
   deletePhoto(photoId: string): Promise<void>;
 }
 
-// ── window.flinsh (exists: store, ready, ai, files; proposed: notifications) ─
+// ── window.flinsh (exists: store, ready, ai, files incl. save; proposed: notifications) ─
 
 export interface FlinshStoreApi {
   get(key: string): Promise<unknown>;
@@ -429,6 +431,8 @@ export interface FlinshFilesApi {
   get(id: string): Promise<string>;
   list?(prefix?: string): Promise<{ id: string; name: string; mime: string; size: number; created_at: string }[]>;
   delete(id: string): Promise<boolean>;
+  /** The user-facing save (needs "downloads"): a download on the web, the share sheet in the phone app. */
+  save?(blob: Blob, filename: string): Promise<unknown>;
 }
 
 export interface FlinshBridge {

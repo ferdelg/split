@@ -17,9 +17,11 @@
 // <script> right after the platform's bridge:
 //   * a securitypolicyviolation reporter and an error/unhandledrejection
 //     reporter, posted to the parent as {__flinsh:"csp"|"error"}.
-// Not added: the PROPOSED flinsh.notifications and flinsh.files. The real
-// bridge doesn't have them, so the harness exercises the in-app reminder
-// banners and the inline photo mode.
+// The real bridge exposes flinsh.files (files:user, and save() with
+// "downloads"); the parent forwards those requests to Node, which answers
+// them with the platform's handleFilesRequest and an in-memory client.
+// flinsh.notifications is still only proposed, so the harness exercises the
+// in-app reminder banners.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -149,8 +151,8 @@ export function buildSrcdoc(platform, html, { permissions, input = {} }) {
 }
 
 /**
- * The parent page. Store and AI requests are answered by Node through exposed
- * bindings (__hStore, __hAi, __hEvent), after the same identity check Flinsh
+ * The parent page. Store, AI and files requests are answered by Node through exposed
+ * bindings (__hStore, __hAi, __hFiles, __hEvent), after the same identity check Flinsh
  * makes (e.source === frame.contentWindow). Replies use the platform's shape
  * {__flinshReply, result, error, code}. On load (and on __hInsets()) the
  * parent posts {__flinsh:"insets", insets} like PhoneToolRunner.
@@ -174,6 +176,19 @@ export function buildParentPage(srcdoc, { sandbox, insets, title = "Split" }) {
     var reply = function (r) { frame.contentWindow && frame.contentWindow.postMessage(Object.assign({ __flinshReply: d.id }, r), "*"); };
     if (d.__flinsh === "store") { window.__hStore(d).then(reply); return; }
     if (d.__flinsh === "ai") { window.__hAi(d).then(reply); return; }
+    if (d.__flinsh === "files") {
+      // Blobs can't cross into Node: send the bytes as base64 (like the platform reading them).
+      var p = Object.assign({}, d.payload || {});
+      var b = p.blob;
+      var go = function (extra) { if (extra) p.__blob = extra; delete p.blob; window.__hFiles({ op: d.op, scope: d.scope, payload: p }).then(reply); };
+      if (b instanceof Blob) {
+        var r = new FileReader();
+        r.onload = function () { go({ b64: String(r.result).split(",")[1] || "", type: b.type }); };
+        r.onerror = function () { reply({ error: "couldn't read the blob", code: "invalid_request" }); };
+        r.readAsDataURL(b);
+      } else go(null);
+      return;
+    }
     window.__hEvent({ kind: d.__flinsh, detail: d.detail !== undefined ? d.detail : d.result !== undefined ? d.result : d.height });
   });
   frame.srcdoc = ${doc};

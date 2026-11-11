@@ -4,6 +4,7 @@
  * per PLAN "Boot". Only actions.ts writes app data to the store; this module
  * writes only housekeeping (chat pruning, bests rebuild, thumb compaction).
  */
+import { exportModeFor } from "../adapters/exportFile";
 import { packMonthLog } from "./logCodec";
 import { isCurrentSession } from "./session";
 import { useLayoutEffect, useReducer, useRef } from "preact/hooks";
@@ -50,7 +51,7 @@ export function setClock(fn: (() => Date) | undefined): void {
 // ── store ──────────────────────────────────────────────────────────────────
 
 function baseCaps(): Capabilities {
-  return { inFlinsh: false, store: "memory", ai: "none", notifications: "in-app", photos: "inline", wakeLock: initialWakeLockStatus() };
+  return { inFlinsh: false, store: "memory", ai: "none", notifications: "in-app", photos: "inline", wakeLock: initialWakeLockStatus(), export: "download" };
 }
 
 export function initialState(): AppState {
@@ -162,6 +163,7 @@ function capsFor(s: Services): Capabilities {
     photos: s.media.mode,
     // Keep what a real request found; otherwise whether the API exists at all.
     wakeLock: wl === "on" || wl === "blocked" ? wl : initialWakeLockStatus(),
+    export: exportModeFor(s.bridge),
   };
 }
 

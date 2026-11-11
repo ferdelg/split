@@ -16,6 +16,7 @@ import { pickFinishLine } from "../lib/finishLines";
 import { uid } from "../lib/ids";
 import { defaultStep } from "../lib/units";
 import { buildExport } from "./exportData";
+import { exportJson, type ExportResult } from "../adapters/exportFile";
 import { defaultSettings, normalizeMonthLog } from "./defaults";
 import { detectBests, emptyBests, foldSession, lastFor, normalizeName, recentFinishLines, sessionOn, summarize } from "./history";
 import { K, chatKey, logKey } from "./keys";
@@ -665,6 +666,13 @@ export const actions: AppActions = {
 };
 
 // ── extras (not in AppActions) ─────────────────────────────────────────────
+
+/** Build the export and hand it over (files.save, download, or clipboard); "manual" = show it. */
+export async function saveExport(): Promise<{ result: ExportResult; json: string }> {
+  const json = await buildExport();
+  const result = await exportJson(json, `split-${getState().today}.json`, services().bridge);
+  return { result, json };
+}
 
 /** Standalone only: save or clear the Anthropic key (localStorage) and refresh caps.ai. */
 export function saveApiKey(key: string | null): void {

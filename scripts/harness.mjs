@@ -2,7 +2,7 @@
 // Real-sandbox verification for dist/index.html.
 //
 // Loads the built app the way Flinsh does (scripts/harness/sandboxDoc.mjs:
-// sandbox="allow-scripts allow-forms", CSP meta first, theme, insets, the
+// sandbox from the manifest (allow-scripts allow-forms, + allow-downloads with "downloads"), CSP meta first, theme, insets, the
 // platform's own window.flinsh bridge compiled from
 // ../Flinch/web/src/lib/miniAppSandbox.ts, then our HTML), answers the bridge
 // from Node with the backend's store semantics and canned Claude replies
@@ -22,6 +22,7 @@
 //   npx vite build && node scripts/harness.mjs [--only=chromium|webkit] [--no-layout] [--no-flow] [--headed]
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { chromium, webkit } from "playwright";
@@ -71,11 +72,14 @@ const record = (browser, section, name, ok, detail = "") => {
   results.push({ browser, section, name, ok, detail });
   console.log(`  ${ok ? "PASS" : "FAIL"} [${browser}] ${section}: ${name}${detail ? ` — ${detail}` : ""}`);
 };
-record("-", "sandbox", `sandbox attribute is "allow-scripts allow-forms"`, SANDBOX === "allow-scripts allow-forms", SANDBOX);
+// "downloads" in the manifest adds allow-downloads (Flinsh miniAppSandbox); never allow-same-origin.
+const EXPECTED_SANDBOX = PERMS.includes("downloads") ? "allow-scripts allow-forms allow-downloads" : "allow-scripts allow-forms";
+record("-", "sandbox", `sandbox attribute is "${EXPECTED_SANDBOX}"`, SANDBOX === EXPECTED_SANDBOX, SANDBOX);
 record("-", "sandbox", "CSP is the Flinsh CSP", CSP === EXPECTED_CSP, CSP === EXPECTED_CSP ? "" : CSP);
 record("-", "sandbox", "srcdoc starts with the CSP meta", SRCDOC.startsWith(`<meta http-equiv="Content-Security-Policy" content="${EXPECTED_CSP}">`));
 record("-", "sandbox", "bridge exposes flinsh.ai.chat (manifest declares ai)", SRCDOC.includes("window.flinsh.ai={chat:"));
-record("-", "sandbox", "no flinsh.files / flinsh.notifications in the frame", !/flinsh\.(files|notifications)\s*=/.test(SRCDOC));
+record("-", "sandbox", "bridge exposes flinsh.files incl. save (files:user + downloads)", platform.real ? SRCDOC.includes("files:(function(){var f=fapi(") && SRCDOC.includes("save:function(b,name)") : true, platform.real ? "" : "vendored bridge: skipped");
+record("-", "sandbox", "no flinsh.notifications in the frame (still proposed)", !/notifications\s*[:=]\s*\{/.test(SRCDOC));
 
 // ── one sandboxed session ────────────────────────────────────────────────────
 const AI_FIELDS = ["model", "system", "messages", "tools", "tool_choice", "max_tokens", "temperature", "thinking"];
@@ -89,6 +93,31 @@ async function openSession(browserType, ctxOpts, seed, { aiCode = null, clock = 
   const problems = { console: [], csp: [], pageErrors: [], network: [], foreign: 0 };
   const aiCalls = [];
   const aiFail = { code: aiCode };
+  // flinsh.files, answered by the platform's own handleFilesRequest with an in-memory client.
+  const files = { stored: new Map(), saved: [], failSave: null };
+  const filesClient = {
+    async put(scope, blob, name, mime) {
+      const id = "f_" + randomBytes(12).toString("hex");
+      const meta = { id, name, mime, size: blob.size, created_at: new Date().toISOString() };
+      files.stored.set(id, { meta, b64: Buffer.from(await blob.arrayBuffer()).toString("base64") });
+      return meta;
+    },
+    async url(scope, id) {
+      const f = files.stored.get(id);
+      if (!f) throw Object.assign(new Error("not found"), { status: 404 });
+      return `data:${f.meta.mime};base64,${f.b64}`;
+    },
+    async list(scope, prefix) {
+      return [...files.stored.values()].map((f) => f.meta).filter((m) => m.name.startsWith(prefix));
+    },
+    async delete(scope, id) {
+      return files.stored.delete(id);
+    },
+    async save(blob, filename) {
+      if (files.failSave) throw new Error(files.failSave);
+      files.saved.push({ filename, type: blob.type, text: await blob.text() });
+    },
+  };
 
   await page.exposeFunction("__hStore", async (d) => {
     // == Flinsh handleStoreRequest, permitted = ["user"]
@@ -125,6 +154,19 @@ async function openSession(browserType, ctxOpts, seed, { aiCode = null, clock = 
       return { error: String(err), code: "ai_error" };
     }
   });
+  await page.exposeFunction("__hFiles", async (d) => {
+    if (typeof platform.handleFilesRequest !== "function") return { error: "files not in this bridge", code: "files_error" };
+    const p = { ...(d.payload || {}) };
+    if (p.__blob) {
+      p.blob = new Blob([Buffer.from(p.__blob.b64, "base64")], { type: p.__blob.type });
+      delete p.__blob;
+    }
+    try {
+      return await platform.handleFilesRequest({ op: d.op, scope: d.scope, payload: p }, PERMS, filesClient);
+    } catch (err) {
+      return { error: String(err && err.message || err), code: "files_error" };
+    }
+  });
   await page.exposeFunction("__hEvent", async (e) => {
     if (e.kind === "csp") problems.csp.push(JSON.stringify(e.detail));
     else if (e.kind === "error") problems.pageErrors.push(String(e.detail));
@@ -143,7 +185,7 @@ async function openSession(browserType, ctxOpts, seed, { aiCode = null, clock = 
   const frameEl = await page.waitForSelector("iframe");
   const frame = await frameEl.contentFrame();
   const fl = page.frameLocator("iframe");
-  return { browser, context, page, frame, fl, backend, problems, aiCalls, aiFail, aborted: false };
+  return { browser, context, page, frame, fl, backend, problems, aiCalls, aiFail, files, aborted: false };
 }
 
 function reportProblems(name, s, section) {
@@ -267,12 +309,13 @@ async function renameTuesday(fl, backend, to) {
   const dlg = fl.getByRole("dialog").last();
   await dlg.waitFor({ timeout: T });
   const box = dlg.locator(`role=textbox[name="Day name"s]`).first();
-  await box.fill(to);
-  // WebKit occasionally drops the first fill while the sheet is still animating in.
-  if ((await box.inputValue()) !== to || !(await waitStore(backend, (d) => activeSplitOf(d.get("splits")).days[2].name === to))) {
-    await box.fill("");
-    await box.pressSequentially(to);
-  }
+  // Type key by key, like a person: each keystroke saves, which must never eat the next one.
+  // Let the sheet finish opening (it moves focus into itself after a frame), as a person would.
+  await sleep(400);
+  await box.click();
+  await box.fill("");
+  await box.pressSequentially(to);
+  must((await box.inputValue()) === to, `field shows ${JSON.stringify(await box.inputValue())}`);
   await closeSheets(fl);
   must(await waitStore(backend, (d) => activeSplitOf(d.get("splits")).days[2].name === to), `split day 2 name = ${JSON.stringify(activeSplitOf(backend.data.get("splits"))?.days[2]?.name)}`);
 }
@@ -378,6 +421,20 @@ async function runFlow(name, browserType) {
       await byName(fl, "Save to my split", ["button"]).waitFor({ timeout: T });
     });
 
+    await step(name, s, section, "me: Export → flinsh.files.save(split-<date>.json)", async () => {
+      await click(fl, "Me", ["tab"]);
+      await click(fl, "Export my data", ["button"]);
+      await fl.getByText(`Saved split-${TOMORROW}.json`).first().waitFor({ timeout: T });
+      must(s.files.saved.length === 1, `${s.files.saved.length} save(s)`);
+      const f = s.files.saved[0];
+      must(f.filename === `split-${TOMORROW}.json` && f.type === "application/json", `${f.filename} ${f.type}`);
+      const data = JSON.parse(f.text);
+      must(JSON.stringify(data).includes("Magdalena"), "export has no profile");
+      must(!f.text.includes(API_KEY_MARKER) && !/apiKey/i.test(f.text), "API key in the export");
+      await fl.getByText("Save a file").first().waitFor({ timeout: T });
+      return `${f.filename}, ${f.text.length} bytes`;
+    });
+
     await step(name, s, section, "store keys", async () => {
       const keys = [...backend.data.keys()];
       for (const k of ["profile", "splits", "active", "bests", "logs/2026-11", `chat/${TOMORROW}`]) must(keys.includes(k), `missing ${k} (have ${keys.join(", ")})`);
@@ -429,6 +486,21 @@ async function runNoAi(name, browserType) {
       await click(fl, "Send", ["button"]);
       await fl.getByText(NO_AI_TEXT).first().waitFor({ timeout: T });
       must(s.aiCalls.length >= 1, "ai never called");
+    });
+    await step(name, s, section, "me: Export falls back when files.save fails", async () => {
+      s.files.failSave = "download blocked";
+      await click(fl, "Me", ["tab"]);
+      await click(fl, "Export my data", ["button"]);
+      const copied = fl.getByText("Copied your data. Paste it somewhere safe.").first();
+      const box = fl.locator(`role=textbox[name="Exported data"s]`).first();
+      await copied.or(box).waitFor({ timeout: T });
+      const how = (await box.isVisible()) ? "select-all box" : "clipboard";
+      if (how === "select-all box") {
+        must(JSON.parse(await box.inputValue()).profile !== undefined || (await box.inputValue()).includes("Magdalena"), "box has no export");
+        await closeSheets(fl);
+      }
+      must(s.files.saved.length === 0, "save recorded despite failing");
+      return how;
     });
     await step(name, s, section, "today still works after the AI error", async () => {
       await click(fl, "Today", ["tab"]);

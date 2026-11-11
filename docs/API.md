@@ -183,6 +183,11 @@ export function fitJpeg(encode: (quality: number, scale: number) => Promise<stri
 export function dataUrlBytes(dataUrl: string): number;  // decoded payload bytes
 export function planEviction(ids: string[], keep: number): string[];  // ids to delete (oldest first)
 export function createMediaAdapter(bridge: FlinshBridge | null, store: StoreAdapter): MediaAdapter;
+// exportFile.ts
+export type ExportMode = "files" | "download" | "clipboard";
+export type ExportResult = "saved" | "downloaded" | "copied" | "manual";  // manual = caller shows a select-all box
+export function exportModeFor(bridge: FlinshBridge | null): ExportMode;
+export function exportJson(json: string, filename: string, bridge: FlinshBridge | null, deps?: { writeClipboard?; download? }): Promise<ExportResult>;  // files.save → clipboard fallback
 // insets.ts
 export function applyInsets(data: unknown, root?: HTMLElement): string[];
 export function installInsetListener(win?: Window): () => void;
